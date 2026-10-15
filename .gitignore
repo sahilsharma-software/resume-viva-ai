@@ -1,0 +1,12 @@
+# Virtual environment and Python cache
+myenv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Secrets
+.env
+
+# Private resume files and generated uploads
+data/*.pdf
+storage/*
