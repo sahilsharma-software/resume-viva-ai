@@ -31,9 +31,8 @@ def extract_skills(text: str) -> list[str]:
     return found_skills
 
 
-
 def detect_resume_sections(text: str) -> list[str]:
-    """Detect common section headings in resume text."""
+    """Detect recognized section headings in resume text."""
 
     known_sections = [
         "Education",
@@ -41,6 +40,7 @@ def detect_resume_sections(text: str) -> list[str]:
         "Projects",
         "Technical Skills",
         "Certifications",
+        "Achievements",
     ]
 
     found_sections = []
@@ -52,3 +52,83 @@ def detect_resume_sections(text: str) -> list[str]:
             found_sections.append(section)
 
     return found_sections
+
+
+def extract_section_content(text: str) -> dict[str, str]:
+    """Extract content under recognized resume section headings."""
+
+    section_aliases = {
+        "Education": [
+            "Education",
+            "Academic Background",
+        ],
+        "Experience": [
+            "Experience",
+            "Work Experience",
+            "Professional Experience",
+        ],
+        "Projects": [
+            "Projects",
+            "Personal Projects",
+        ],
+        "Technical Skills": [
+            "Technical Skills",
+            "Skills",
+        ],
+        "Certifications": [
+            "Certifications",
+            "Certificates",
+            "Certificate",
+        ],
+        "Achievements": [
+            "Achievements",
+            "Achievement",
+        ],
+    }
+
+    lines = text.splitlines()
+    extracted_sections = {}
+    current_section = None
+
+    for line in lines:
+        heading = line.strip().rstrip(":").strip()
+
+        matched_section = None
+
+        for standard_name, aliases in section_aliases.items():
+            if any(
+                heading.lower() == alias.lower()
+                for alias in aliases
+            ):
+                matched_section = standard_name
+                break
+
+        if matched_section:
+            current_section = matched_section
+            extracted_sections.setdefault(current_section, [])
+            continue
+
+        if current_section and line.strip():
+            extracted_sections[current_section].append(
+                line.strip()
+            )
+
+    return {
+        section: "\n".join(content)
+        for section, content in extracted_sections.items()
+    }
+
+
+def analyze_resume(text: str) -> dict:
+    """Analyze resume text and return structured results."""
+
+    skills = extract_skills(text)
+    sections = detect_resume_sections(text)
+    section_content = extract_section_content(text)
+
+    return {
+        "skills": skills,
+        "sections": sections,
+        "section_content": section_content,
+        "total_skills": len(skills),
+    }
