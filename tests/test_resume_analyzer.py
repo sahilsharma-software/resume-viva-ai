@@ -33,6 +33,22 @@ def test_detect_resume_sections():
     assert "Experience" not in sections
 
 
+def test_detect_singular_certification_section():
+    text = """
+    Education
+    CERTIFICATION
+    Artificial Intelligence using Python
+    Projects
+    """
+
+    sections = detect_resume_sections(text)
+
+    assert "Education" in sections
+    assert "Certifications" in sections
+    assert "Projects" in sections
+
+
+
 
 def test_extract_section_content_keeps_sections_separate():
     text = """

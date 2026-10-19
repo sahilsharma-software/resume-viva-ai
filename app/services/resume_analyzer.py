@@ -46,13 +46,15 @@ def detect_resume_sections(text: str) -> list[str]:
     found_sections = []
 
     for section in known_sections:
-        pattern = r"(?<!\w)" + re.escape(section) + r"(?!\w)"
+        if section == "Certifications":
+            pattern = r"(?<!\w)Certifications?(?!\w)"
+        else:
+            pattern = r"(?<!\w)" + re.escape(section) + r"(?!\w)"
 
         if re.search(pattern, text, re.IGNORECASE):
             found_sections.append(section)
 
     return found_sections
-
 
 def extract_section_content(text: str) -> dict[str, str]:
     """Extract content under recognized resume section headings."""
@@ -79,6 +81,7 @@ def extract_section_content(text: str) -> dict[str, str]:
             "Certifications",
             "Certificates",
             "Certificate",
+            "Certification"
         ],
         "Achievements": [
             "Achievements",
