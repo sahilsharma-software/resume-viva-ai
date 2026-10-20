@@ -1,13 +1,8 @@
 
-from fastapi.testclient import TestClient
 from pathlib import Path
 
-from app.main import app
 
-client = TestClient(app)
-
-
-def test_analyze_resume_endpoint():
+def test_analyze_resume_endpoint(client):
     response = client.post(
         "/analyze",
         json={
@@ -32,11 +27,11 @@ def test_analyze_resume_endpoint():
     assert "FastAPI" in result["skills"]
     assert "Education" in result["sections"]
     assert "Projects" in result["sections"]
+    assert "viva_questions" in result
+    assert len(result["viva_questions"]) > 0
 
 
-
-
-def test_upload_resume_endpoint():
+def test_upload_resume_endpoint(client):
     pdf_path = Path("data/sample_resume.pdf")
 
     with pdf_path.open("rb") as pdf_file:
@@ -58,3 +53,7 @@ def test_upload_resume_endpoint():
     assert "skills" in result
     assert "sections" in result
     assert "Python" in result["skills"]
+    assert "resume_id" in result
+    assert isinstance(result["resume_id"], int)
+    assert "viva_questions" in result
+    assert len(result["viva_questions"]) > 0
