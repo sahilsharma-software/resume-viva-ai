@@ -155,3 +155,83 @@ def test_generate_mcqs_from_resume_endpoint(client):
         assert "options" in mcq
         assert "skill" in mcq
         assert "correct_answer" not in mcq
+
+
+def test_get_resume_endpoint(client):
+    pdf_path = Path("data/sample_resume.pdf")
+
+    with pdf_path.open("rb") as pdf_file:
+        upload_response = client.post(
+            "/upload",
+            files={
+                "file": (
+                    "sample_resume.pdf",
+                    pdf_file,
+                    "application/pdf",
+                )
+            },
+        )
+
+    assert upload_response.status_code == 200
+
+    resume_id = upload_response.json()["resume_id"]
+
+    response = client.get(f"/resume/{resume_id}")
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result["id"] == resume_id
+    assert result["filename"] == "sample_resume.pdf"
+    assert "created_at" in result
+    assert "extracted_text" not in result
+
+
+def test_get_resume_not_found(client):
+    response = client.get("/resume/999999999")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Resume not found."
+
+
+
+def test_get_all_resumes_endpoint(client):
+    pdf_path = Path("data/sample_resume.pdf")
+
+    with pdf_path.open("rb") as pdf_file:
+        upload_response = client.post(
+            "/upload",
+            files={
+                "file": (
+                    "sample_resume.pdf",
+                    pdf_file,
+                    "application/pdf",
+                )
+            },
+        )
+
+    assert upload_response.status_code == 200
+
+    response = client.get("/resumes")
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert isinstance(result, list)
+    assert len(result) > 0
+
+    for resume in result:
+        assert "id" in resume
+        assert "filename" in resume
+        assert "created_at" in resume
+        assert "extracted_text" not in resume
+
+
+def test_get_all_resumes_returns_list(client):
+    response = client.get("/resumes")
+
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+

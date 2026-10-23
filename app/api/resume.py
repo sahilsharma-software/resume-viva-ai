@@ -151,3 +151,38 @@ def upload_resume(file: UploadFile = File(...),db:Session=Depends(get_db)):
             status_code=400,
             detail="Could not process the PDF file or save the resume",
         )
+
+
+@router.get("/resume/{resume_id}")
+def get_resume(resume_id: int, db: Session = Depends(get_db)):
+    resume = db.query(Resume).filter(
+        Resume.id == resume_id
+    ).first()
+
+    if resume is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Resume not found.",
+        )
+
+    return {
+        "id": resume.id,
+        "filename": resume.filename,
+        "created_at": resume.created_at,
+    }
+
+
+@router.get("/resumes")
+def get_all_resumes(db: Session = Depends(get_db)):
+    resumes = db.query(Resume).order_by(
+        Resume.created_at.desc()
+    ).all()
+
+    return [
+        {
+            "id": resume.id,
+            "filename": resume.filename,
+            "created_at": resume.created_at,
+        }
+        for resume in resumes
+    ]
