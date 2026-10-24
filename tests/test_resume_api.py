@@ -235,3 +235,160 @@ def test_get_all_resumes_returns_list(client):
     assert response.status_code == 200
     assert isinstance(response.json(), list)
 
+
+def test_evaluate_combined_mcqs_all_correct(client):
+    response = client.post(
+        "/mcqs/evaluate/combined",
+        json={
+            "answers": [
+                {
+                    "skill": "Python",
+                    "question": (
+                        "Which keyword defines a function in Python?"
+                    ),
+                    "answer": "def",
+                },
+                {
+                    "skill": "SQL",
+                    "question": (
+                        "Which SQL command retrieves data from a table?"
+                    ),
+                    "answer": "SELECT",
+                },
+                {
+                    "skill": "FastAPI",
+                    "question": (
+                        "Which Python framework is used to build APIs in this project?"
+                    ),
+                    "answer": "FastAPI",
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result["total_questions"] == 3
+    assert result["correct_answers"] == 3
+    assert result["incorrect_answers"] == 0
+    assert result["unanswered"] == 0
+    assert result["score_percentage"] == 100.0
+    assert len(result["question_feedback"]) == 3
+
+
+def test_evaluate_combined_mcqs_incorrect_answers(client):
+    response = client.post(
+        "/mcqs/evaluate/combined",
+        json={
+            "answers": [
+                {
+                    "skill": "Python",
+                    "question": (
+                        "Which keyword defines a function in Python?"
+                    ),
+                    "answer": "function",
+                },
+                {
+                    "skill": "SQL",
+                    "question": (
+                        "Which SQL command retrieves data from a table?"
+                    ),
+                    "answer": "SELECT",
+                },
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result["total_questions"] == 2
+    assert result["correct_answers"] == 1
+    assert result["incorrect_answers"] == 1
+    assert result["unanswered"] == 0
+    assert result["score_percentage"] == 50.0
+
+
+def test_evaluate_combined_mcqs_empty_answers(client):
+    response = client.post(
+        "/mcqs/evaluate/combined",
+        json={"answers": []},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "At least one answer is required."
+    )
+
+
+def test_evaluate_combined_mcqs_unsupported_skill(client):
+    response = client.post(
+        "/mcqs/evaluate/combined",
+        json={
+            "answers": [
+                {
+                    "skill": "Java",
+                    "question": "What is a class?",
+                    "answer": "class",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == (
+        "No MCQs available for skill: Java"
+    )
+
+
+def test_evaluate_combined_mcqs_invalid_question(client):
+    response = client.post(
+        "/mcqs/evaluate/combined",
+        json={
+            "answers": [
+                {
+                    "skill": "Python",
+                    "question": "This question is not in the bank",
+                    "answer": "def",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Question does not belong" in (
+        response.json()["detail"]
+    )
+
+
+def test_evaluate_combined_mcqs_unanswered(client):
+    response = client.post(
+        "/mcqs/evaluate/combined",
+        json={
+            "answers": [
+                {
+                    "skill": "Python",
+                    "question": (
+                        "Which keyword defines a function in Python?"
+                    ),
+                    "answer": None,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result["total_questions"] == 1
+    assert result["correct_answers"] == 0
+    assert result["incorrect_answers"] == 0
+    assert result["unanswered"] == 1
+    assert result["score_percentage"] == 0.0
+    assert result["question_feedback"][0]["status"] == "unanswered"
+
+

@@ -25,6 +25,14 @@ class MCQEvaluationRequest(BaseModel):
     skill: str
     answers: list[str]
 
+class MCQAnswerItem(BaseModel):
+    skill:str
+    question:str
+    answer:str | None = None
+
+class CombinedMCQEvaluationRequest(BaseModel):
+    answers: list[MCQAnswerItem]
+
 def add_viva_questions(result: dict) -> dict:
     result["viva_questions"] = generate_viva_questions(
         skills=result["skills"],
@@ -66,6 +74,64 @@ def evaluate_mcqs(request: MCQEvaluationRequest):
         result = evaluate_mcq_answers(
             mcqs=mcqs,
             answers=request.answers,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    return result
+
+
+@router.post("/mcqs/evaluate/combined")
+def evaluate_combined_mcqs(
+    request: CombinedMCQEvaluationRequest,
+):
+    if not request.answers:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one answer is required.",
+        )
+
+    mcqs_to_evaluate = []
+    submitted_answers = []
+
+    for item in request.answers:
+        available_mcqs = generate_mcqs(item.skill)
+
+        if not available_mcqs:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No MCQs available for skill: {item.skill}",
+            )
+
+        # Find the question in the trusted backend question bank
+        matched_mcq = next(
+            (
+                mcq
+                for mcq in available_mcqs
+                if mcq["question"].strip() == item.question.strip()
+            ),
+            None,
+        )
+
+        if matched_mcq is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Question does not belong to the "
+                    f"question bank for skill: {item.skill}"
+                ),
+            )
+
+        mcqs_to_evaluate.append(matched_mcq)
+        submitted_answers.append(item.answer or "")
+
+    try:
+        result = evaluate_mcq_answers(
+            mcqs=mcqs_to_evaluate,
+            answers=submitted_answers,
         )
     except ValueError as exc:
         raise HTTPException(
