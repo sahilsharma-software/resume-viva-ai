@@ -14,6 +14,7 @@ st.set_page_config(
 )
 
 API_URL = "http://127.0.0.1:8000"
+REQUEST_TIMEOUT = 30
 
 # =========================================================
 # CUSTOM STYLING
@@ -22,20 +23,17 @@ API_URL = "http://127.0.0.1:8000"
 st.markdown(
     """
     <style>
-    /* Main application background */
     .stApp {
         background: #0b1120;
         color: #e5e7eb;
     }
 
-    /* Main content spacing */
     .block-container {
         padding-top: 2rem;
         padding-bottom: 3rem;
         max-width: 1500px;
     }
 
-    /* Sidebar */
     [data-testid="stSidebar"] {
         background: #111827;
         border-right: 1px solid #263449;
@@ -47,12 +45,10 @@ st.markdown(
         color: #e5e7eb;
     }
 
-    /* Headings */
     h1, h2, h3 {
         color: #f8fafc !important;
     }
 
-    /* Metric cards */
     [data-testid="stMetric"] {
         background: linear-gradient(135deg, #17243a, #111b2e);
         border: 1px solid #2a3b55;
@@ -68,7 +64,6 @@ st.markdown(
         color: #60a5fa !important;
     }
 
-    /* Buttons */
     .stButton > button,
     .stFormSubmitButton > button {
         border-radius: 9px;
@@ -87,26 +82,22 @@ st.markdown(
         color: white;
     }
 
-    /* Content cards */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         border-color: #2a3b55;
         border-radius: 14px;
         background: #111b2e;
     }
 
-    /* Inputs */
     [data-baseweb="input"],
     [data-baseweb="select"],
     [data-baseweb="textarea"] {
         border-radius: 8px;
     }
 
-    /* Dividers */
     hr {
         border-color: #263449;
     }
 
-    /* Small helper text */
     .dashboard-subtitle {
         color: #9caec5;
         font-size: 1rem;
@@ -144,14 +135,14 @@ st.markdown(
 # SESSION STATE
 # =========================================================
 
-defaults = {
+DEFAULTS = {
     "analysis_data": None,
     "mcq_data": [],
     "mcq_results": None,
     "viva_submitted": False,
 }
 
-for key, default_value in defaults.items():
+for key, default_value in DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = default_value
 
@@ -159,24 +150,61 @@ for key, default_value in defaults.items():
 # HELPER FUNCTIONS
 # =========================================================
 
+
 def clear_mcq_answers():
-    """Clear saved radio-button selections."""
-    for index in range(len(st.session_state.mcq_data)):
-        key = f"mcq_answer_{index}"
-        if key in st.session_state:
+    """Remove all saved MCQ radio selections."""
+    for key in list(st.session_state.keys()):
+        if key.startswith("mcq_answer_"):
             del st.session_state[key]
 
 
+
 def call_backend_error(response, action):
-    """Display a readable backend error."""
+    """Show a readable message when the backend request fails."""
     st.error(
-        f"{action} failed. "
-        f"Status: {response.status_code}"
+        f"{action} failed. HTTP status: {response.status_code}"
     )
+
     try:
-        st.code(response.text)
-    except Exception:
-        st.write("The backend returned an unexpected error.")
+        detail = response.json()
+    except ValueError:
+        detail = response.text
+
+    if detail:
+        st.code(str(detail))
+
+
+def fetch_mcq_history():
+    """Fetch saved MCQ attempts from the backend."""
+    try:
+        response = requests.get(
+            f"{API_URL}/mcq-attempts",
+            timeout=REQUEST_TIMEOUT,
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+
+            if isinstance(result, list):
+                return result, None
+
+            return [], "The backend returned an unexpected history format."
+
+        return [], (
+            f"History request failed with HTTP "
+            f"{response.status_code}: {response.text}"
+        )
+
+    except requests.RequestException as error:
+        return [], f"Could not connect to backend: {error}"
+
+
+def safe_percentage(value):
+    """Convert a score to a valid percentage between 0 and 100."""
+    try:
+        return max(0.0, min(100.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # =========================================================
@@ -195,17 +223,19 @@ with st.sidebar:
             "Resume Analysis",
             "Viva Preparation",
             "MCQ Practice",
+            "MCQ History",
         ],
         key="page_navigation",
     )
 
     st.divider()
 
-    if st.session_state.analysis_data is not None:
+    sidebar_data = st.session_state.analysis_data
+
+    if sidebar_data is not None:
         st.success("Resume analyzed")
         st.caption(
-            f"Resume ID: "
-            f"{st.session_state.analysis_data.get('resume_id', 'N/A')}"
+            f"Resume ID: {sidebar_data.get('resume_id', 'N/A')}"
         )
     else:
         st.info("No resume analyzed yet")
@@ -215,7 +245,7 @@ with st.sidebar:
     st.caption("Resume AI · Project Dashboard")
 
 # =========================================================
-# COMMON DATA
+# COMMON SESSION DATA
 # =========================================================
 
 data = st.session_state.analysis_data
@@ -226,13 +256,13 @@ mcq_results = st.session_state.mcq_results
 # =========================================================
 
 if page == "Dashboard":
-
     st.title("📊 Dashboard")
+
     st.markdown(
         '<p class="dashboard-subtitle">'
-        'Welcome back! Manage your resume analysis, '
-        'viva preparation and MCQ practice in one place.'
-        '</p>',
+        "Welcome back! Manage your resume analysis, "
+        "viva preparation and MCQ practice in one place."
+        "</p>",
         unsafe_allow_html=True,
     )
 
@@ -249,6 +279,16 @@ if page == "Dashboard":
         unsafe_allow_html=True,
     )
 
+    # Load history independently of resume upload status.
+    history_data, history_error = fetch_mcq_history()
+
+    if history_error:
+        st.warning(
+            "Saved MCQ analytics could not be loaded. "
+            "Check that the FastAPI backend is running."
+        )
+
+    # Resume information
     if data is None:
         st.info(
             "Your dashboard is ready. Open "
@@ -269,26 +309,20 @@ if page == "Dashboard":
 
         c1, c2, c3, c4 = st.columns(4)
 
-        with c1:
-            st.metric(
-                "Resume ID",
-                str(data.get("resume_id", "N/A")),
+        c1.metric(
+            "Resume ID",
+            str(data.get("resume_id", "N/A")),
+        )
+        c2.metric("Skills Detected", len(skills))
+        c3.metric("Viva Questions", len(viva_questions))
+
+        if mcq_results is not None:
+            latest_score = safe_percentage(
+                mcq_results.get("score_percentage", 0)
             )
-
-        with c2:
-            st.metric("Skills Detected", len(skills))
-
-        with c3:
-            st.metric("Viva Questions", len(viva_questions))
-
-        with c4:
-            if mcq_results is not None:
-                st.metric(
-                    "Latest MCQ Score",
-                    f"{mcq_results.get('score_percentage', 0):.2f}%",
-                )
-            else:
-                st.metric("Latest MCQ Score", "Not attempted")
+            c4.metric("Latest MCQ Score", f"{latest_score:.2f}%")
+        else:
+            c4.metric("Latest MCQ Score", "Not attempted")
 
         st.divider()
         st.subheader("💻 Detected Skills")
@@ -305,66 +339,106 @@ if page == "Dashboard":
         else:
             st.warning("No skills were detected in the resume.")
 
-        st.divider()
-        st.subheader("🎯 Your Preparation Workspace")
+    # Saved MCQ analytics are visible even before resume upload.
+    total_attempts = len(history_data)
 
-        c1, c2, c3 = st.columns(3)
+    if history_data:
+        scores = [
+            safe_percentage(item.get("score_percentage", 0))
+            for item in history_data
+        ]
+        average_score = sum(scores) / len(scores)
 
-        with c1:
-            with st.container(border=True):
-                st.subheader("📄 Resume Analysis")
-                st.write(
-                    "Review your uploaded resume and detected skills."
-                )
-                st.caption("Choose Resume Analysis in the sidebar.")
+        # The backend should return newest attempts first.
+        latest_saved_score = scores[0]
+    else:
+        average_score = 0.0
+        latest_saved_score = 0.0
 
-        with c2:
-            with st.container(border=True):
-                st.subheader("🎓 Viva Preparation")
-                st.write(
-                    "Practise technical questions extracted "
-                    "from your resume analysis."
-                )
-                st.caption("Choose Viva Preparation in the sidebar.")
+    st.divider()
+    st.subheader("📈 MCQ Performance Overview")
 
-        with c3:
-            with st.container(border=True):
-                st.subheader("📝 MCQ Practice")
-                st.write(
-                    "Attempt questions and review your score "
-                    "with answer-by-answer feedback."
-                )
-                st.caption("Choose MCQ Practice in the sidebar.")
+    a1, a2, a3 = st.columns(3)
 
-        if mcq_results is not None:
-            st.divider()
-            st.subheader("📈 Latest MCQ Performance")
+    a1.metric("Total MCQ Attempts", total_attempts)
+    a2.metric("Average MCQ Score", f"{average_score:.2f}%")
 
-            score = mcq_results.get("score_percentage", 0)
+    if history_data:
+        a3.metric(
+            "Latest Saved Score",
+            f"{latest_saved_score:.2f}%",
+        )
+    else:
+        a3.metric("Latest Saved Score", "No attempts yet")
 
-            st.progress(
-                max(0.0, min(1.0, score / 100)),
-                text=f"Score: {score:.2f}%",
+    if history_data:
+        st.caption(
+            "The latest saved score assumes the backend returns "
+            "attempts in newest-first order."
+        )
+
+    st.divider()
+    st.subheader("🎯 Your Preparation Workspace")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        with st.container(border=True):
+            st.subheader("📄 Resume Analysis")
+            st.write(
+                "Review your uploaded resume and detected skills."
             )
+            st.caption("Choose Resume Analysis in the sidebar.")
 
-            p1, p2, p3 = st.columns(3)
+    with c2:
+        with st.container(border=True):
+            st.subheader("🎓 Viva Preparation")
+            st.write(
+                "Practise technical questions extracted "
+                "from your resume analysis."
+            )
+            st.caption("Choose Viva Preparation in the sidebar.")
 
-            p1.metric("Correct", mcq_results["correct_answers"])
-            p2.metric("Incorrect", mcq_results["incorrect_answers"])
-            p3.metric("Unanswered", mcq_results["unanswered"])
+    with c3:
+        with st.container(border=True):
+            st.subheader("📝 MCQ Practice")
+            st.write(
+                "Attempt questions and review your score "
+                "with answer-by-answer feedback."
+            )
+            st.caption("Choose MCQ Practice in the sidebar.")
+
+    if mcq_results is not None:
+        st.divider()
+        st.subheader("📊 Latest MCQ Session")
+
+        score = safe_percentage(
+            mcq_results.get("score_percentage", 0)
+        )
+
+        st.progress(
+            score / 100,
+            text=f"Score: {score:.2f}%",
+        )
+
+        p1, p2, p3 = st.columns(3)
+
+        p1.metric("Correct", mcq_results.get("correct_answers", 0))
+        p2.metric("Incorrect", mcq_results.get("incorrect_answers", 0))
+        p3.metric("Unanswered", mcq_results.get("unanswered", 0))
 
 # =========================================================
 # RESUME ANALYSIS PAGE
 # =========================================================
 
 elif page == "Resume Analysis":
-
     st.title("📄 Resume Analysis")
+
     st.markdown(
         '<p class="dashboard-subtitle">'
-        'Upload a PDF resume to identify technical skills '
-        'and prepare for interviews.'
-        '</p>',
+        "Upload a PDF resume to identify technical skills "
+        "and prepare for interviews."
+        "</p>",
         unsafe_allow_html=True,
     )
 
@@ -393,19 +467,29 @@ elif page == "Resume Analysis":
                     )
 
                 if response.status_code == 200:
-                    st.session_state.analysis_data = response.json()
-                    st.session_state.mcq_data = []
-                    st.session_state.mcq_results = None
-                    st.session_state.viva_submitted = False
+                    result = response.json()
 
-                    st.success("Resume analyzed successfully!")
-                    st.rerun()
+                    if not isinstance(result, dict):
+                        st.error(
+                            "The backend returned an unexpected "
+                            "resume analysis response."
+                        )
+                    else:
+                        st.session_state.analysis_data = result
+                        st.session_state.mcq_data = []
+                        st.session_state.mcq_results = None
+                        st.session_state.viva_submitted = False
+                        clear_mcq_answers()
 
+                        st.success("Resume analyzed successfully!")
+                        st.rerun()
                 else:
                     call_backend_error(response, "Resume analysis")
 
             except requests.RequestException as error:
                 st.error(f"Could not connect to backend: {error}")
+            except ValueError:
+                st.error("The backend returned an invalid JSON response.")
 
     data = st.session_state.analysis_data
 
@@ -415,8 +499,14 @@ elif page == "Resume Analysis":
 
         c1, c2 = st.columns(2)
 
-        c1.metric("Resume ID", str(data.get("resume_id", "N/A")))
-        c2.metric("Skills Detected", len(data.get("skills", [])))
+        c1.metric(
+            "Resume ID",
+            str(data.get("resume_id", "N/A")),
+        )
+        c2.metric(
+            "Skills Detected",
+            len(data.get("skills", [])),
+        )
 
         st.subheader("💻 Skills Found")
 
@@ -441,12 +531,12 @@ elif page == "Resume Analysis":
 # =========================================================
 
 elif page == "Viva Preparation":
-
     st.title("🎓 Viva Preparation")
+
     st.markdown(
         '<p class="dashboard-subtitle">'
-        'Practise technical questions based on your resume analysis.'
-        '</p>',
+        "Practise technical questions based on your resume analysis."
+        "</p>",
         unsafe_allow_html=True,
     )
 
@@ -459,6 +549,7 @@ elif page == "Viva Preparation":
 
     else:
         questions = data.get("viva_questions", [])
+        resume_id = data.get("resume_id", "unknown")
 
         if not questions:
             st.info("No viva questions are available.")
@@ -466,7 +557,6 @@ elif page == "Viva Preparation":
             st.write(f"**Total viva questions: {len(questions)}**")
 
             with st.form("viva_answers_form"):
-
                 viva_answers = []
 
                 for index, question in enumerate(questions, start=1):
@@ -475,11 +565,8 @@ elif page == "Viva Preparation":
 
                         answer = st.text_area(
                             "Your answer",
-                            key=(
-                                f"viva_{data['resume_id']}_{index}"
-                            ),
+                            key=f"viva_{resume_id}_{index}",
                         )
-
                         viva_answers.append(answer)
 
                 submitted_viva = st.form_submit_button(
@@ -515,13 +602,13 @@ elif page == "Viva Preparation":
 # =========================================================
 
 elif page == "MCQ Practice":
-
     st.title("📝 MCQ Practice")
+
     st.markdown(
         '<p class="dashboard-subtitle">'
-        'Generate questions for supported skills, submit your answers '
-        'and review your performance.'
-        '</p>',
+        "Generate questions for supported skills, submit your answers "
+        "and review your performance."
+        "</p>",
         unsafe_allow_html=True,
     )
 
@@ -535,51 +622,72 @@ elif page == "MCQ Practice":
     else:
         skills = data.get("skills", [])
 
+        if not skills:
+            st.warning(
+                "No skills were detected. Please check your resume "
+                "analysis before generating MCQs."
+            )
+
         if st.button("⚡ Generate MCQs", type="primary"):
             st.session_state.mcq_data = []
             st.session_state.mcq_results = None
             clear_mcq_answers()
 
-            with st.spinner("Generating MCQs..."):
-
-                for skill in skills:
-                    try:
-                        response = requests.post(
-                            f"{API_URL}/mcqs",
-                            json={"skill": skill},
-                            timeout=30,
-                        )
-
-                        if response.status_code == 200:
-                            result = response.json()
-
-                            st.session_state.mcq_data.extend(
-                                result.get("mcqs", [])
-                            )
-
-                        elif response.status_code == 404:
-                            continue
-
-                        else:
-                            st.warning(
-                                f"Could not fetch MCQs for {skill}: "
-                                f"{response.text}"
-                            )
-
-                    except requests.RequestException as error:
-                        st.error(
-                            f"Could not connect to backend: {error}"
-                        )
-                        break
-
-            if st.session_state.mcq_data:
-                st.success("MCQs generated successfully!")
-                st.rerun()
+            if not skills:
+                st.warning("There are no detected skills to practise.")
             else:
-                st.warning(
-                    "No MCQs are available for the supported "
-                    "skills detected in this resume."
-                )
+                with st.spinner("Generating MCQs..."):
+                    for skill in skills:
+                        try:
+                            response = requests.post(
+                                f"{API_URL}/mcqs",
+                                json={"skill": skill},
+                                timeout=REQUEST_TIMEOUT,
+                            )
+
+                            if response.status_code == 200:
+                                result = response.json()
+
+                                if isinstance(result, dict):
+                                    generated = result.get("mcqs", [])
+
+                                    if isinstance(generated, list):
+                                        st.session_state.mcq_data.extend(
+                                            generated
+                                        )
+                                    else:
+                                        st.warning(
+                                            f"Unexpected MCQ format for {skill}."
+                                        )
+
+                            elif response.status_code == 404:
+                                # This skill may not have a question bank.
+                                continue
+
+                            else:
+                                st.warning(
+                                    f"Could not fetch MCQs for {skill}: "
+                                    f"{response.text}"
+                                )
+
+                        except requests.RequestException as error:
+                            st.error(
+                                f"Could not connect to backend: {error}"
+                            )
+                            break
+                        except ValueError:
+                            st.warning(
+                                f"The backend returned invalid JSON for {skill}."
+                            )
+
+                if st.session_state.mcq_data:
+                    st.success("MCQs generated successfully!")
+                    st.rerun()
+                else:
+                    st.warning(
+                        "No MCQs are available for the supported "
+                        "skills detected in this resume."
+                    )
 
         mcqs = st.session_state.mcq_data
 
@@ -589,7 +697,6 @@ elif page == "MCQ Practice":
             st.caption(f"Total questions: {len(mcqs)}")
 
             with st.form("mcq_form"):
-
                 selected_answers = []
 
                 for index, mcq in enumerate(mcqs):
@@ -599,11 +706,21 @@ elif page == "MCQ Practice":
                             f"{mcq.get('skill', 'General')}"
                         )
 
-                        st.markdown(f"**{mcq['question']}**")
+                        question_text = mcq.get("question", "")
+                        options = mcq.get("options", [])
+
+                        st.markdown(f"**{question_text}**")
+
+                        if not isinstance(options, list) or not options:
+                            st.warning(
+                                "Options are unavailable for this question."
+                            )
+                            selected_answers.append(None)
+                            continue
 
                         answer = st.radio(
                             "Select your answer",
-                            mcq["options"],
+                            options,
                             index=None,
                             key=f"mcq_answer_{index}",
                         )
@@ -616,65 +733,77 @@ elif page == "MCQ Practice":
                 )
 
             if submitted_mcqs:
-                evaluation_answers = [
-                    {
-                        "skill": mcq["skill"],
-                        "question": mcq["question"],
-                        "answer": answer,
-                    }
-                    for mcq, answer in zip(mcqs, selected_answers)
-                ]
+                evaluation_answers = []
+
+                for mcq, answer in zip(mcqs, selected_answers):
+                    evaluation_answers.append(
+                        {
+                            "skill": mcq.get("skill", "General"),
+                            "question": mcq.get("question", ""),
+                            "answer": answer,
+                        }
+                    )
 
                 try:
                     with st.spinner("Evaluating your answers..."):
                         response = requests.post(
                             f"{API_URL}/mcqs/evaluate/combined",
                             json={"answers": evaluation_answers},
-                            timeout=30,
+                            timeout=REQUEST_TIMEOUT,
                         )
 
                     if response.status_code == 200:
-                        st.session_state.mcq_results = response.json()
-                        st.success("Evaluation completed successfully!")
+                        result = response.json()
+
+                        if isinstance(result, dict):
+                            st.session_state.mcq_results = result
+                            st.success(
+                                "Evaluation completed successfully!"
+                            )
+                        else:
+                            st.error(
+                                "The backend returned an unexpected "
+                                "evaluation response."
+                            )
                     else:
                         call_backend_error(response, "MCQ evaluation")
 
                 except requests.RequestException as error:
                     st.error(f"Could not connect to backend: {error}")
+                except ValueError:
+                    st.error(
+                        "The backend returned an invalid evaluation response."
+                    )
 
-            # -------------------------
-            # MCQ Results
-            # -------------------------
-
+            # Display results after submission.
             results = st.session_state.mcq_results
 
             if results is not None:
                 st.divider()
                 st.subheader("📊 Evaluation Results")
 
+                score = safe_percentage(
+                    results.get("score_percentage", 0)
+                )
+
                 r1, r2, r3, r4 = st.columns(4)
 
-                r1.metric(
-                    "Score",
-                    f"{results['score_percentage']:.2f}%",
-                )
+                r1.metric("Score", f"{score:.2f}%")
                 r2.metric(
                     "Correct",
-                    results["correct_answers"],
+                    results.get("correct_answers", 0),
                 )
                 r3.metric(
                     "Incorrect",
-                    results["incorrect_answers"],
+                    results.get("incorrect_answers", 0),
                 )
                 r4.metric(
                     "Unanswered",
-                    results["unanswered"],
+                    results.get("unanswered", 0),
                 )
 
-                score = results["score_percentage"]
-
                 st.progress(
-                    max(0.0, min(1.0, score / 100)),
+                    score / 100,
                     text=f"Your score: {score:.2f}%",
                 )
 
@@ -695,32 +824,48 @@ elif page == "MCQ Practice":
 
                 st.subheader("📖 Question-wise Feedback")
 
-                for index, feedback in enumerate(
-                    results["question_feedback"],
-                    start=1,
-                ):
-                    with st.container(border=True):
-                        st.markdown(
-                            f"**Q{index}. {feedback['question']}**"
-                        )
+                feedback_items = results.get("question_feedback", [])
 
-                        status = feedback["status"]
+                if not feedback_items:
+                    st.info(
+                        "No question-wise feedback was returned "
+                        "by the backend."
+                    )
+                else:
+                    for index, feedback in enumerate(
+                        feedback_items,
+                        start=1,
+                    ):
+                        with st.container(border=True):
+                            st.markdown(
+                                f"**Q{index}. "
+                                f"{feedback.get('question', 'Question')}**"
+                            )
 
-                        if status == "correct":
-                            st.success("Correct answer!")
-                        elif status == "incorrect":
-                            st.error("Incorrect answer.")
-                        else:
-                            st.warning("Not answered.")
+                            status = feedback.get("status", "unanswered")
 
-                        st.write(
-                            "Your answer: "
-                            f"{feedback['selected_answer'] or 'Not answered'}"
-                        )
-                        st.write(
-                            "Correct answer: "
-                            f"{feedback['correct_answer']}"
-                        )
+                            if status == "correct":
+                                st.success("Correct answer!")
+                            elif status == "incorrect":
+                                st.error("Incorrect answer.")
+                            else:
+                                st.warning("Not answered.")
+
+                            selected_answer = feedback.get(
+                                "selected_answer"
+                            )
+                            correct_answer = feedback.get(
+                                "correct_answer",
+                                "Not provided",
+                            )
+
+                            st.write(
+                                "Your answer: "
+                                f"{selected_answer or 'Not answered'}"
+                            )
+                            st.write(
+                                f"Correct answer: {correct_answer}"
+                            )
 
                 if st.button("🔄 Retry MCQs"):
                     st.session_state.mcq_results = None
@@ -728,10 +873,121 @@ elif page == "MCQ Practice":
                     st.rerun()
 
 # =========================================================
+# MCQ PERFORMANCE HISTORY PAGE
+# =========================================================
+
+elif page == "MCQ History":
+    st.title("📈 MCQ Performance History")
+
+    st.markdown(
+        '<p class="dashboard-subtitle">'
+        "Review your previous MCQ attempts and track your progress."
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
+    if st.button("🔄 Refresh History"):
+        st.rerun()
+
+    try:
+        with st.spinner("Loading your MCQ history..."):
+            response = requests.get(
+                f"{API_URL}/mcq-attempts",
+                timeout=REQUEST_TIMEOUT,
+            )
+
+        if response.status_code == 200:
+            attempts = response.json()
+
+            if not isinstance(attempts, list):
+                st.error(
+                    "The backend returned an unexpected history format."
+                )
+
+            elif not attempts:
+                st.info(
+                    "No MCQ attempts found yet. "
+                    "Complete an MCQ practice session first."
+                )
+
+            else:
+                scores = [
+                    safe_percentage(
+                        attempt.get("score_percentage", 0)
+                    )
+                    for attempt in attempts
+                ]
+
+                latest_score = scores[0]
+                average_score = sum(scores) / len(scores)
+
+                c1, c2, c3 = st.columns(3)
+
+                c1.metric("Total Attempts", len(attempts))
+                c2.metric("Latest Score", f"{latest_score:.2f}%")
+                c3.metric("Average Score", f"{average_score:.2f}%")
+
+                st.caption(
+                    "Latest score assumes the backend returns "
+                    "attempts in newest-first order."
+                )
+
+                st.divider()
+                st.subheader("🕒 Previous Attempts")
+
+                for attempt in attempts:
+                    with st.container(border=True):
+                        score = safe_percentage(
+                            attempt.get("score_percentage", 0)
+                        )
+
+                        st.markdown(
+                            f"### {attempt.get('skill', 'Unknown Skill')}"
+                        )
+
+                        st.progress(
+                            score / 100,
+                            text=f"Score: {score:.2f}%",
+                        )
+
+                        a1, a2, a3, a4 = st.columns(4)
+
+                        a1.metric(
+                            "Questions",
+                            attempt.get("total_questions", 0),
+                        )
+                        a2.metric(
+                            "Correct",
+                            attempt.get("correct_answers", 0),
+                        )
+                        a3.metric(
+                            "Incorrect",
+                            attempt.get("incorrect_answers", 0),
+                        )
+                        a4.metric(
+                            "Unanswered",
+                            attempt.get("unanswered", 0),
+                        )
+
+                        created_at = attempt.get("created_at")
+
+                        if created_at:
+                            st.caption(f"Attempt date: {created_at}")
+
+        else:
+            call_backend_error(response, "Loading MCQ history")
+
+    except requests.RequestException as error:
+        st.error(f"Could not connect to backend: {error}")
+    except ValueError:
+        st.error("The backend returned an invalid history response.")
+
+# =========================================================
 # FOOTER
 # =========================================================
 
 st.divider()
+
 st.caption(
     "AI-Powered Resume Analysis & Viva Preparation System "
     "· Streamlit Frontend"

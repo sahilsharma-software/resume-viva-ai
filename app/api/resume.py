@@ -1,17 +1,21 @@
 
-from fastapi import APIRouter, File, HTTPException, UploadFile,Depends
+from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.database.session import get_db
+from app.models.resume import Resume
+from app.models.mcq_attempt import MCQAttempt
 
 from app.services.resume_analyzer import analyze_resume
 from app.services.viva_generator import generate_viva_questions
-from app.services.resume_parser import extract_text_from_pdf
-from app.services.mcq_generator import generate_mcqs,evaluate_mcq_answers
+from app.services.mcq_generator import generate_mcqs, evaluate_mcq_answers
 
-from sqlalchemy.orm import Session
-from app.database.session import get_db
-from app.models.resume import Resume
 
 router = APIRouter()
+
+
+# -------------------- Request Schemas --------------------
 
 class ResumeTextRequest(BaseModel):
     text: str
@@ -25,23 +29,43 @@ class MCQEvaluationRequest(BaseModel):
     skill: str
     answers: list[str]
 
+
 class MCQAnswerItem(BaseModel):
-    skill:str
-    question:str
-    answer:str | None = None
+    skill: str
+    question: str
+    answer: str | None = None
+
 
 class CombinedMCQEvaluationRequest(BaseModel):
     answers: list[MCQAnswerItem]
 
-def add_viva_questions(result: dict) -> dict:
+
+# -------------------- Viva Questions Helper --------------------
+
+def add_viva_questions(result):
+    skills = result.get("skills", [])
+    section_content = result.get("section_content", {})
+
     result["viva_questions"] = generate_viva_questions(
-        skills=result["skills"],
-        section_content=result["section_content"],
+        skills,
+        section_content,
     )
+
     return result
 
+
+# -------------------- Analyze Resume Text --------------------
+
+@router.post("/analyze")
+def analyze_resume_text(request: ResumeTextRequest):
+    result = analyze_resume(request.text)
+    return add_viva_questions(result)
+
+
+# -------------------- Generate MCQs --------------------
+
 @router.post("/mcqs")
-def get_mcqs(request:MCQRequest):
+def get_mcqs(request: MCQRequest):
     mcqs = generate_mcqs(request.skill)
 
     if not mcqs:
@@ -49,6 +73,8 @@ def get_mcqs(request:MCQRequest):
             status_code=404,
             detail="No MCQs available for this skill.",
         )
+
+    # Never expose correct answers before evaluation.
     public_mcqs = [
         {
             "question": mcq["question"],
@@ -57,8 +83,14 @@ def get_mcqs(request:MCQRequest):
         }
         for mcq in mcqs
     ]
-    return {"mcqs": public_mcqs}
 
+    return {
+        "mcqs": public_mcqs,
+        "total_questions": len(public_mcqs),
+    }
+
+
+# -------------------- Evaluate MCQs for One Skill --------------------
 
 @router.post("/mcqs/evaluate")
 def evaluate_mcqs(request: MCQEvaluationRequest):
@@ -71,7 +103,7 @@ def evaluate_mcqs(request: MCQEvaluationRequest):
         )
 
     try:
-        result = evaluate_mcq_answers(
+        return evaluate_mcq_answers(
             mcqs=mcqs,
             answers=request.answers,
         )
@@ -81,12 +113,13 @@ def evaluate_mcqs(request: MCQEvaluationRequest):
             detail=str(exc),
         ) from exc
 
-    return result
 
+# -------------------- Evaluate Combined MCQs and Save Attempts --------------------
 
 @router.post("/mcqs/evaluate/combined")
 def evaluate_combined_mcqs(
     request: CombinedMCQEvaluationRequest,
+    db: Session = Depends(get_db),
 ):
     if not request.answers:
         raise HTTPException(
@@ -96,7 +129,9 @@ def evaluate_combined_mcqs(
 
     mcqs_to_evaluate = []
     submitted_answers = []
+    skill_groups = {}
 
+    # Validate submitted questions against the backend question bank.
     for item in request.answers:
         available_mcqs = generate_mcqs(item.skill)
 
@@ -106,7 +141,6 @@ def evaluate_combined_mcqs(
                 detail=f"No MCQs available for skill: {item.skill}",
             )
 
-        # Find the question in the trusted backend question bank
         matched_mcq = next(
             (
                 mcq
@@ -128,43 +162,79 @@ def evaluate_combined_mcqs(
         mcqs_to_evaluate.append(matched_mcq)
         submitted_answers.append(item.answer or "")
 
+        skill_groups.setdefault(
+            item.skill,
+            {"mcqs": [], "answers": []},
+        )
+
+        skill_groups[item.skill]["mcqs"].append(matched_mcq)
+        skill_groups[item.skill]["answers"].append(item.answer or "")
+
     try:
+        # Calculate the overall quiz result.
         result = evaluate_mcq_answers(
             mcqs=mcqs_to_evaluate,
             answers=submitted_answers,
         )
+
+        # Save one performance record for each skill.
+        for skill, group in skill_groups.items():
+            skill_result = evaluate_mcq_answers(
+                mcqs=group["mcqs"],
+                answers=group["answers"],
+            )
+
+            attempt = MCQAttempt(
+                skill=skill,
+                total_questions=skill_result["total_questions"],
+                correct_answers=skill_result["correct_answers"],
+                incorrect_answers=skill_result["incorrect_answers"],
+                unanswered=skill_result["unanswered"],
+                score_percentage=skill_result["score_percentage"],
+            )
+
+            db.add(attempt)
+
+        # Save all skill attempts in one transaction.
+        db.commit()
+
+        return result
+
     except ValueError as exc:
+        db.rollback()
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         ) from exc
 
-    return result
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not evaluate or save MCQ performance.",
+        ) from exc
 
 
-
-@router.post("/analyze")
-def analyze_resume_text(request: ResumeTextRequest):
-    result = analyze_resume(request.text)
-    return add_viva_questions(result)
-
+# -------------------- Generate MCQs from Resume Text --------------------
 
 @router.post("/resume/mcqs")
 def get_resume_mcqs(request: ResumeTextRequest):
     result = analyze_resume(request.text)
+    resume_skills = result.get("skills", [])
 
-    resume_skills = result["skills"]
     all_mcqs = []
 
     for skill in resume_skills:
         mcqs = generate_mcqs(skill)
 
         for mcq in mcqs:
-            all_mcqs.append({
-                "question": mcq["question"],
-                "options": mcq["options"],
-                "skill": mcq["skill"],
-            })
+            all_mcqs.append(
+                {
+                    "question": mcq["question"],
+                    "options": mcq["options"],
+                    "skill": mcq["skill"],
+                }
+            )
 
     if not all_mcqs:
         raise HTTPException(
@@ -179,10 +249,14 @@ def get_resume_mcqs(request: ResumeTextRequest):
     }
 
 
+# -------------------- Upload Resume PDF --------------------
 
 @router.post("/upload")
-def upload_resume(file: UploadFile = File(...),db:Session=Depends(get_db)):
-    if not file.filename.lower().endswith(".pdf"):
+def upload_resume(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=400,
             detail="Only PDF files are allowed.",
@@ -191,18 +265,29 @@ def upload_resume(file: UploadFile = File(...),db:Session=Depends(get_db)):
     try:
         import pymupdf
 
-        with pymupdf.open(stream=file.file.read(), filetype="pdf") as pdf:
-            extracted_text = "".join(page.get_text() for page in pdf)
+        with pymupdf.open(
+            stream=file.file.read(),
+            filetype="pdf",
+        ) as pdf:
+            extracted_text = "".join(
+                page.get_text() for page in pdf
+            )
 
         if not extracted_text.strip():
             raise HTTPException(
                 status_code=400,
                 detail="No readable text found in the PDF.",
             )
-        resume = Resume(filename=file.filename,extracted_text = extracted_text)
+
+        resume = Resume(
+            filename=file.filename,
+            extracted_text=extracted_text,
+        )
+
         db.add(resume)
         db.commit()
         db.refresh(resume)
+
         result = analyze_resume(extracted_text)
         result["resume_id"] = resume.id
 
@@ -211,19 +296,27 @@ def upload_resume(file: UploadFile = File(...),db:Session=Depends(get_db)):
     except HTTPException:
         db.rollback()
         raise
-    except Exception:
+
+    except Exception as exc:
         db.rollback()
         raise HTTPException(
             status_code=400,
-            detail="Could not process the PDF file or save the resume",
-        )
+            detail="Could not process the PDF file or save the resume.",
+        ) from exc
 
+
+# -------------------- Get One Saved Resume --------------------
 
 @router.get("/resume/{resume_id}")
-def get_resume(resume_id: int, db: Session = Depends(get_db)):
-    resume = db.query(Resume).filter(
-        Resume.id == resume_id
-    ).first()
+def get_resume(
+    resume_id: int,
+    db: Session = Depends(get_db),
+):
+    resume = (
+        db.query(Resume)
+        .filter(Resume.id == resume_id)
+        .first()
+    )
 
     if resume is None:
         raise HTTPException(
@@ -238,11 +331,15 @@ def get_resume(resume_id: int, db: Session = Depends(get_db)):
     }
 
 
+# -------------------- Get All Saved Resumes --------------------
+
 @router.get("/resumes")
-def get_all_resumes(db: Session = Depends(get_db)):
-    resumes = db.query(Resume).order_by(
-        Resume.created_at.desc()
-    ).all()
+def get_resumes(db: Session = Depends(get_db)):
+    resumes = (
+        db.query(Resume)
+        .order_by(Resume.id.desc())
+        .all()
+    )
 
     return [
         {
@@ -252,3 +349,29 @@ def get_all_resumes(db: Session = Depends(get_db)):
         }
         for resume in resumes
     ]
+@router.get("/mcq-attempts")
+def get_mcq_attempts(
+    db: Session = Depends(get_db),
+):
+    attempts = (
+        db.query(MCQAttempt)
+        .order_by(MCQAttempt.created_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": attempt.id,
+            "skill": attempt.skill,
+            "total_questions": attempt.total_questions,
+            "correct_answers": attempt.correct_answers,
+            "incorrect_answers": attempt.incorrect_answers,
+            "unanswered": attempt.unanswered,
+            "score_percentage": attempt.score_percentage,
+            "created_at": attempt.created_at,
+        }
+        for attempt in attempts
+    ]
+
+
+
