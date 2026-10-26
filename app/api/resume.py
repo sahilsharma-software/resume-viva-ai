@@ -6,10 +6,13 @@ from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.models.resume import Resume
 from app.models.mcq_attempt import MCQAttempt
+from app.models.ai_viva_question import AIVivaQuestion
 
 from app.services.resume_analyzer import analyze_resume
 from app.services.viva_generator import generate_viva_questions
 from app.services.mcq_generator import generate_mcqs, evaluate_mcq_answers
+
+from app.services.ai_viva_generator import generate_ai_viva_questions
 
 
 router = APIRouter()
@@ -19,6 +22,9 @@ router = APIRouter()
 
 class ResumeTextRequest(BaseModel):
     text: str
+
+class AIVivaRequest(BaseModel):
+    resume_id: int
 
 
 class MCQRequest(BaseModel):
@@ -251,6 +257,7 @@ def get_resume_mcqs(request: ResumeTextRequest):
 
 # -------------------- Upload Resume PDF --------------------
 
+
 @router.post("/upload")
 def upload_resume(
     file: UploadFile = File(...),
@@ -290,6 +297,7 @@ def upload_resume(
 
         result = analyze_resume(extracted_text)
         result["resume_id"] = resume.id
+        result["extracted_text"] = extracted_text
 
         return add_viva_questions(result)
 
@@ -304,8 +312,7 @@ def upload_resume(
             detail="Could not process the PDF file or save the resume.",
         ) from exc
 
-
-# -------------------- Get One Saved Resume --------------------
+# -------------------- Get Resume by ID --------------------
 
 @router.get("/resume/{resume_id}")
 def get_resume(
@@ -329,7 +336,6 @@ def get_resume(
         "filename": resume.filename,
         "created_at": resume.created_at,
     }
-
 
 # -------------------- Get All Saved Resumes --------------------
 
@@ -373,5 +379,81 @@ def get_mcq_attempts(
         for attempt in attempts
     ]
 
+# -------------------- Generate AI Viva Questions --------------------
+@router.post("/ai-viva")
+def generate_ai_viva(
+    request: AIVivaRequest,
+    db: Session = Depends(get_db),
+):
+    # Step 1: Fetch resume from database
+    resume = (
+        db.query(Resume)
+        .filter(Resume.id == request.resume_id)
+        .first()
+    )
 
+    if resume is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Resume not found.",
+        )
 
+    # Step 2: Analyze the saved resume text
+    result = analyze_resume(resume.extracted_text or "")
+
+    skills = result.get("skills", [])
+    section_content = result.get("section_content", {})
+
+    # Step 3: Check for previously saved AI questions
+    saved_questions = (
+        db.query(AIVivaQuestion)
+        .filter(AIVivaQuestion.resume_id == resume.id)
+        .all()
+    )
+
+    if saved_questions:
+        return {
+            "resume_id": resume.id,
+            "skills": skills,
+            "ai_viva_questions": [
+                item.question for item in saved_questions
+            ],
+        }
+
+    # Step 4: Generate new questions using Gemini
+    try:
+        questions = generate_ai_viva_questions(
+            skills,
+            section_content,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
+
+    # Step 5: Save generated questions in the database
+    try:
+        for question in questions:
+            db.add(
+                AIVivaQuestion(
+                    resume_id=resume.id,
+                    question=question,
+                )
+            )
+
+        db.commit()
+
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save AI viva questions.",
+        ) from exc
+
+    # Step 6: Return the response
+    return {
+        "resume_id": resume.id,
+        "skills": skills,
+        "ai_viva_questions": questions,
+    }

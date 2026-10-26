@@ -140,27 +140,28 @@ DEFAULTS = {
     "mcq_data": [],
     "mcq_results": None,
     "viva_submitted": False,
+    "ai_viva_questions": None,
+    "ai_viva_resume_id": None,
 }
 
 for key, default_value in DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = default_value
 
+
 # =========================================================
 # HELPER FUNCTIONS
 # =========================================================
 
-
 def clear_mcq_answers():
-    """Remove all saved MCQ radio selections."""
+    """Remove saved MCQ radio selections."""
     for key in list(st.session_state.keys()):
         if key.startswith("mcq_answer_"):
             del st.session_state[key]
 
 
-
 def call_backend_error(response, action):
-    """Show a readable message when the backend request fails."""
+    """Show readable backend errors."""
     st.error(
         f"{action} failed. HTTP status: {response.status_code}"
     )
@@ -175,7 +176,7 @@ def call_backend_error(response, action):
 
 
 def fetch_mcq_history():
-    """Fetch saved MCQ attempts from the backend."""
+    """Fetch saved MCQ attempts."""
     try:
         response = requests.get(
             f"{API_URL}/mcq-attempts",
@@ -188,7 +189,7 @@ def fetch_mcq_history():
             if isinstance(result, list):
                 return result, None
 
-            return [], "The backend returned an unexpected history format."
+            return [], "Unexpected history response format."
 
         return [], (
             f"History request failed with HTTP "
@@ -200,11 +201,101 @@ def fetch_mcq_history():
 
 
 def safe_percentage(value):
-    """Convert a score to a valid percentage between 0 and 100."""
+    """Convert a score to a percentage between 0 and 100."""
     try:
         return max(0.0, min(100.0, float(value)))
     except (TypeError, ValueError):
         return 0.0
+
+
+def clear_ai_viva():
+    """Clear cached AI questions when the resume changes."""
+    st.session_state.ai_viva_questions = None
+    st.session_state.ai_viva_resume_id = None
+
+
+
+def generate_ai_viva():
+    """
+    Generate AI viva questions for the selected resume.
+    The backend database stores and reuses generated questions.
+    """
+
+    data = st.session_state.analysis_data
+
+    if not isinstance(data, dict):
+        st.warning("Please analyze a resume first.")
+        return
+
+    resume_id = data.get("resume_id")
+
+    if resume_id is None:
+        st.error(
+            "Resume ID was not found. Please upload and analyze "
+            "your resume again."
+        )
+        return
+
+    # Reuse questions already loaded in this Streamlit session.
+    if (
+        st.session_state.ai_viva_questions
+        and st.session_state.ai_viva_resume_id == resume_id
+    ):
+        st.info("Using the AI viva questions already loaded.")
+        return
+
+    try:
+        with st.spinner("Loading AI viva questions..."):
+            response = requests.post(
+                f"{API_URL}/ai-viva",
+                json={"resume_id": resume_id},
+                timeout=90,
+            )
+
+        if response.status_code == 200:
+            result = response.json()
+
+            if not isinstance(result, dict):
+                st.error("Unexpected AI viva response format.")
+                return
+
+            questions = result.get("ai_viva_questions", [])
+
+            if (
+                not isinstance(questions, list)
+                or not questions
+                or not all(
+                    isinstance(question, str)
+                    and question.strip()
+                    for question in questions
+                )
+            ):
+                st.error(
+                    "The backend did not return valid AI viva questions."
+                )
+                return
+
+            # Cache questions in Streamlit's current session.
+            st.session_state.ai_viva_questions = questions
+            st.session_state.ai_viva_resume_id = resume_id
+
+            st.success(
+                f"Loaded {len(questions)} AI viva questions!"
+            )
+
+        else:
+            call_backend_error(response, "AI viva generation")
+
+    except requests.Timeout:
+        st.error(
+            "The request timed out. Check the backend and try again."
+        )
+
+    except requests.RequestException as error:
+        st.error(f"Could not connect to backend: {error}")
+
+    except ValueError:
+        st.error("The backend returned an invalid JSON response.")
 
 
 # =========================================================
@@ -244,12 +335,14 @@ with st.sidebar:
     st.caption("Built with Streamlit + FastAPI")
     st.caption("Resume AI · Project Dashboard")
 
+
 # =========================================================
 # COMMON SESSION DATA
 # =========================================================
 
 data = st.session_state.analysis_data
 mcq_results = st.session_state.mcq_results
+
 
 # =========================================================
 # DASHBOARD PAGE
@@ -279,7 +372,6 @@ if page == "Dashboard":
         unsafe_allow_html=True,
     )
 
-    # Load history independently of resume upload status.
     history_data, history_error = fetch_mcq_history()
 
     if history_error:
@@ -288,7 +380,6 @@ if page == "Dashboard":
             "Check that the FastAPI backend is running."
         )
 
-    # Resume information
     if data is None:
         st.info(
             "Your dashboard is ready. Open "
@@ -309,10 +400,7 @@ if page == "Dashboard":
 
         c1, c2, c3, c4 = st.columns(4)
 
-        c1.metric(
-            "Resume ID",
-            str(data.get("resume_id", "N/A")),
-        )
+        c1.metric("Resume ID", str(data.get("resume_id", "N/A")))
         c2.metric("Skills Detected", len(skills))
         c3.metric("Viva Questions", len(viva_questions))
 
@@ -339,7 +427,6 @@ if page == "Dashboard":
         else:
             st.warning("No skills were detected in the resume.")
 
-    # Saved MCQ analytics are visible even before resume upload.
     total_attempts = len(history_data)
 
     if history_data:
@@ -348,8 +435,6 @@ if page == "Dashboard":
             for item in history_data
         ]
         average_score = sum(scores) / len(scores)
-
-        # The backend should return newest attempts first.
         latest_saved_score = scores[0]
     else:
         average_score = 0.0
@@ -364,10 +449,7 @@ if page == "Dashboard":
     a2.metric("Average MCQ Score", f"{average_score:.2f}%")
 
     if history_data:
-        a3.metric(
-            "Latest Saved Score",
-            f"{latest_saved_score:.2f}%",
-        )
+        a3.metric("Latest Saved Score", f"{latest_saved_score:.2f}%")
     else:
         a3.metric("Latest Saved Score", "No attempts yet")
 
@@ -394,8 +476,7 @@ if page == "Dashboard":
         with st.container(border=True):
             st.subheader("🎓 Viva Preparation")
             st.write(
-                "Practise technical questions extracted "
-                "from your resume analysis."
+                "Practise technical questions generated from your resume."
             )
             st.caption("Choose Viva Preparation in the sidebar.")
 
@@ -416,16 +497,14 @@ if page == "Dashboard":
             mcq_results.get("score_percentage", 0)
         )
 
-        st.progress(
-            score / 100,
-            text=f"Score: {score:.2f}%",
-        )
+        st.progress(score / 100, text=f"Score: {score:.2f}%")
 
         p1, p2, p3 = st.columns(3)
 
         p1.metric("Correct", mcq_results.get("correct_answers", 0))
         p2.metric("Incorrect", mcq_results.get("incorrect_answers", 0))
         p3.metric("Unanswered", mcq_results.get("unanswered", 0))
+
 
 # =========================================================
 # RESUME ANALYSIS PAGE
@@ -475,19 +554,25 @@ elif page == "Resume Analysis":
                             "resume analysis response."
                         )
                     else:
+                        # Clear AI questions because this is a new analysis.
+                        clear_ai_viva()
+
                         st.session_state.analysis_data = result
                         st.session_state.mcq_data = []
                         st.session_state.mcq_results = None
                         st.session_state.viva_submitted = False
+
                         clear_mcq_answers()
 
                         st.success("Resume analyzed successfully!")
                         st.rerun()
+
                 else:
                     call_backend_error(response, "Resume analysis")
 
             except requests.RequestException as error:
                 st.error(f"Could not connect to backend: {error}")
+
             except ValueError:
                 st.error("The backend returned an invalid JSON response.")
 
@@ -499,14 +584,8 @@ elif page == "Resume Analysis":
 
         c1, c2 = st.columns(2)
 
-        c1.metric(
-            "Resume ID",
-            str(data.get("resume_id", "N/A")),
-        )
-        c2.metric(
-            "Skills Detected",
-            len(data.get("skills", [])),
-        )
+        c1.metric("Resume ID", str(data.get("resume_id", "N/A")))
+        c2.metric("Skills Detected", len(data.get("skills", [])))
 
         st.subheader("💻 Skills Found")
 
@@ -526,6 +605,7 @@ elif page == "Resume Analysis":
         with st.expander("View full analysis response"):
             st.json(data)
 
+
 # =========================================================
 # VIVA PREPARATION PAGE
 # =========================================================
@@ -535,7 +615,7 @@ elif page == "Viva Preparation":
 
     st.markdown(
         '<p class="dashboard-subtitle">'
-        "Practise technical questions based on your resume analysis."
+        "Practise rule-based and AI-generated technical questions."
         "</p>",
         unsafe_allow_html=True,
     )
@@ -548,13 +628,20 @@ elif page == "Viva Preparation":
         )
 
     else:
-        questions = data.get("viva_questions", [])
         resume_id = data.get("resume_id", "unknown")
 
+        # -------------------------------------------------
+        # RULE-BASED VIVA QUESTIONS
+        # -------------------------------------------------
+
+        st.subheader("📘 Standard Viva Questions")
+
+        questions = data.get("viva_questions", [])
+
         if not questions:
-            st.info("No viva questions are available.")
+            st.info("No standard viva questions are available.")
         else:
-            st.write(f"**Total viva questions: {len(questions)}**")
+            st.write(f"**Total questions: {len(questions)}**")
 
             with st.form("viva_answers_form"):
                 viva_answers = []
@@ -593,9 +680,68 @@ elif page == "Viva Preparation":
 
                 st.info(
                     "Answers are displayed for review. "
-                    "Automatic viva answer evaluation is not "
-                    "implemented yet."
+                    "Automatic viva answer evaluation is not implemented yet."
                 )
+
+        # -------------------------------------------------
+        # AI-GENERATED VIVA QUESTIONS
+        # -------------------------------------------------
+
+        st.divider()
+        st.subheader("🤖 AI-Generated Viva Questions")
+
+        st.write(
+            "Generate personalized technical questions using Gemini. "
+            "This makes an API request only when generation is needed."
+        )
+
+        cached_questions = st.session_state.ai_viva_questions
+        cached_resume_id = st.session_state.ai_viva_resume_id
+
+        has_cached_questions = (
+            isinstance(cached_questions, list)
+            and bool(cached_questions)
+            and cached_resume_id == resume_id
+        )
+
+        if has_cached_questions:
+            st.success(
+                "AI questions are saved for this resume. "
+                "Displaying them without another Gemini request."
+            )
+
+        if st.button(
+            "🤖 Generate AI Viva Questions",
+            type="primary",
+            disabled=has_cached_questions,
+            key="generate_ai_viva_button",
+        ):
+            generate_ai_viva()
+
+        # Display cached questions below the button.
+        cached_questions = st.session_state.ai_viva_questions
+
+        if (
+            isinstance(cached_questions, list)
+            and cached_questions
+            and st.session_state.ai_viva_resume_id == resume_id
+        ):
+            st.write(
+                f"**Total AI questions: {len(cached_questions)}**"
+            )
+
+            for index, question in enumerate(
+                cached_questions,
+                start=1,
+            ):
+                with st.container(border=True):
+                    st.markdown(f"**AI Q{index}. {question}**")
+
+            st.caption(
+                "These questions are stored in the current Streamlit "
+                "session. Refreshing or restarting the session may clear them."
+            )
+
 
 # =========================================================
 # MCQ PRACTICE PAGE
@@ -624,8 +770,7 @@ elif page == "MCQ Practice":
 
         if not skills:
             st.warning(
-                "No skills were detected. Please check your resume "
-                "analysis before generating MCQs."
+                "No skills were detected. Please check your resume analysis."
             )
 
         if st.button("⚡ Generate MCQs", type="primary"):
@@ -661,7 +806,6 @@ elif page == "MCQ Practice":
                                         )
 
                             elif response.status_code == 404:
-                                # This skill may not have a question bank.
                                 continue
 
                             else:
@@ -675,6 +819,7 @@ elif page == "MCQ Practice":
                                 f"Could not connect to backend: {error}"
                             )
                             break
+
                         except ValueError:
                             st.warning(
                                 f"The backend returned invalid JSON for {skill}."
@@ -685,8 +830,7 @@ elif page == "MCQ Practice":
                     st.rerun()
                 else:
                     st.warning(
-                        "No MCQs are available for the supported "
-                        "skills detected in this resume."
+                        "No MCQs are available for the supported skills."
                     )
 
         mcqs = st.session_state.mcq_data
@@ -762,20 +906,19 @@ elif page == "MCQ Practice":
                             )
                         else:
                             st.error(
-                                "The backend returned an unexpected "
-                                "evaluation response."
+                                "Unexpected evaluation response."
                             )
                     else:
                         call_backend_error(response, "MCQ evaluation")
 
                 except requests.RequestException as error:
                     st.error(f"Could not connect to backend: {error}")
+
                 except ValueError:
                     st.error(
                         "The backend returned an invalid evaluation response."
                     )
 
-            # Display results after submission.
             results = st.session_state.mcq_results
 
             if results is not None:
@@ -789,18 +932,9 @@ elif page == "MCQ Practice":
                 r1, r2, r3, r4 = st.columns(4)
 
                 r1.metric("Score", f"{score:.2f}%")
-                r2.metric(
-                    "Correct",
-                    results.get("correct_answers", 0),
-                )
-                r3.metric(
-                    "Incorrect",
-                    results.get("incorrect_answers", 0),
-                )
-                r4.metric(
-                    "Unanswered",
-                    results.get("unanswered", 0),
-                )
+                r2.metric("Correct", results.get("correct_answers", 0))
+                r3.metric("Incorrect", results.get("incorrect_answers", 0))
+                r4.metric("Unanswered", results.get("unanswered", 0))
 
                 st.progress(
                     score / 100,
@@ -813,13 +947,11 @@ elif page == "MCQ Practice":
                     )
                 elif score >= 50:
                     st.info(
-                        "Good effort! Review your incorrect answers "
-                        "to improve your score."
+                        "Good effort! Review your incorrect answers."
                     )
                 else:
                     st.warning(
-                        "Keep practising. Review the answers below "
-                        "and try another attempt."
+                        "Keep practising and review the answers below."
                     )
 
                 st.subheader("📖 Question-wise Feedback")
@@ -827,10 +959,7 @@ elif page == "MCQ Practice":
                 feedback_items = results.get("question_feedback", [])
 
                 if not feedback_items:
-                    st.info(
-                        "No question-wise feedback was returned "
-                        "by the backend."
-                    )
+                    st.info("No question-wise feedback was returned.")
                 else:
                     for index, feedback in enumerate(
                         feedback_items,
@@ -851,9 +980,7 @@ elif page == "MCQ Practice":
                             else:
                                 st.warning("Not answered.")
 
-                            selected_answer = feedback.get(
-                                "selected_answer"
-                            )
+                            selected_answer = feedback.get("selected_answer")
                             correct_answer = feedback.get(
                                 "correct_answer",
                                 "Not provided",
@@ -863,14 +990,13 @@ elif page == "MCQ Practice":
                                 "Your answer: "
                                 f"{selected_answer or 'Not answered'}"
                             )
-                            st.write(
-                                f"Correct answer: {correct_answer}"
-                            )
+                            st.write(f"Correct answer: {correct_answer}")
 
                 if st.button("🔄 Retry MCQs"):
                     st.session_state.mcq_results = None
                     clear_mcq_answers()
                     st.rerun()
+
 
 # =========================================================
 # MCQ PERFORMANCE HISTORY PAGE
@@ -900,9 +1026,7 @@ elif page == "MCQ History":
             attempts = response.json()
 
             if not isinstance(attempts, list):
-                st.error(
-                    "The backend returned an unexpected history format."
-                )
+                st.error("The backend returned an unexpected history format.")
 
             elif not attempts:
                 st.info(
@@ -928,8 +1052,7 @@ elif page == "MCQ History":
                 c3.metric("Average Score", f"{average_score:.2f}%")
 
                 st.caption(
-                    "Latest score assumes the backend returns "
-                    "attempts in newest-first order."
+                    "Latest score assumes newest-first ordering."
                 )
 
                 st.divider()
@@ -979,8 +1102,10 @@ elif page == "MCQ History":
 
     except requests.RequestException as error:
         st.error(f"Could not connect to backend: {error}")
+
     except ValueError:
         st.error("The backend returned an invalid history response.")
+
 
 # =========================================================
 # FOOTER

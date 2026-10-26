@@ -10,6 +10,7 @@ from app.database import Base
 from app.database.session import get_db
 from app.main import app
 from app.models.resume import Resume  # Register the model
+from app.models.ai_viva_question import AIVivaQuestion
 
 
 # Read the test database URL from the environment

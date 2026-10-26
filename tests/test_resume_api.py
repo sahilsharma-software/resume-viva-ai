@@ -1,5 +1,6 @@
 
 from pathlib import Path
+from unittest.mock import patch
 
 
 def test_analyze_resume_endpoint(client):
@@ -392,3 +393,64 @@ def test_evaluate_combined_mcqs_unanswered(client):
     assert result["question_feedback"][0]["status"] == "unanswered"
 
 
+def test_ai_viva_uses_cached_questions(client, db_session):
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from app.models.ai_viva_question import AIVivaQuestion
+
+    # Step 1: Upload a resume into the test database
+    pdf_path = Path("data/sample_resume.pdf")
+
+    with pdf_path.open("rb") as pdf_file:
+        upload_response = client.post(
+            "/upload",
+            files={
+                "file": (
+                    "sample_resume.pdf",
+                    pdf_file,
+                    "application/pdf",
+                )
+            },
+        )
+
+    assert upload_response.status_code == 200
+
+    resume_id = upload_response.json()["resume_id"]
+
+    # Step 2: Insert cached questions into the test database
+    db_session.add_all(
+        [
+            AIVivaQuestion(
+                resume_id=resume_id,
+                question="Explain Python functions.",
+            ),
+            AIVivaQuestion(
+                resume_id=resume_id,
+                question="What is FastAPI?",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    # Step 3: Verify that cached questions are returned
+    # without calling the AI generator
+    with patch(
+        "app.api.resume.generate_ai_viva_questions"
+    ) as mock_generator:
+        response = client.post(
+            "/ai-viva",
+            json={"resume_id": resume_id},
+        )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result["resume_id"] == resume_id
+    assert result["ai_viva_questions"] == [
+        "Explain Python functions.",
+        "What is FastAPI?",
+    ]
+
+    mock_generator.assert_not_called()
