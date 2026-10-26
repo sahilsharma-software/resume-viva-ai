@@ -1,79 +1,50 @@
 # AI-Powered Resume Analysis and Viva Preparation System
 
-## 1. Project Overview
+A Python-based web application that helps students analyze their resumes, identify technical skills, prepare for viva examinations, and practice technical MCQs with automated evaluation and performance tracking.
 
-The AI-Powered Resume Analysis and Viva Preparation System is a web-based application designed to analyze resumes and help students prepare for technical interviews and viva examinations.
+## Overview
 
-The system extracts information from PDF resumes, identifies relevant skills and resume sections, generates skill-based viva questions, and provides multiple-choice question (MCQ) practice with automated evaluation and attempt history.
+The AI-Powered Resume Analysis and Viva Preparation System combines resume parsing, skill extraction, viva question generation, MCQ practice, and performance tracking in a single application.
 
-## 2. Objectives
+Users can upload a PDF resume, review the extracted information, generate viva questions based on their skills, practice multiple-choice questions, and review their previous attempts.
 
-- Analyze resumes uploaded in PDF format.
-- Extract skills and important resume sections.
-- Generate viva questions based on identified skills.
-- Provide MCQ-based practice for technical preparation.
-- Evaluate submitted answers and calculate scores.
-- Store and display previous MCQ attempts.
-- Provide a dashboard for viewing practice analytics.
+## Features
 
-## 3. Features
+- **PDF Resume Analysis** — Upload resumes and extract text using PyMuPDF.
+- **Skill Extraction** — Identify relevant technical skills and resume sections.
+- **Viva Preparation** — Generate rule-based and AI-generated viva questions.
+- **MCQ Practice** — Generate technical multiple-choice questions.
+- **Automated Evaluation** — Calculate scores and provide question-wise feedback.
+- **MCQ History** — Store and review previous practice attempts.
+- **Dashboard** — View available practice statistics and performance summaries.
+- **REST API** — Expose application functionality through FastAPI.
+- **Database Persistence** — Store resume records, MCQ attempts, and AI viva questions in PostgreSQL.
+- **Automated Testing** — Test application behavior using pytest.
 
-- PDF resume upload and analysis.
-- Resume text extraction using PyMuPDF.
-- Skill and section extraction.
-- Rule-based viva question generation.
-- MCQ generation and evaluation.
-- Question-wise feedback and score calculation.
-- MCQ attempt history.
-- Dashboard with practice analytics.
-- REST API using FastAPI.
-- PostgreSQL database integration.
-- Automated tests using pytest.
-- Interactive frontend using Streamlit.
-
-## 4. Technology Stack
+## Technology Stack
 
 | Component | Technology |
 |---|---|
 | Programming Language | Python |
-| Backend Framework | FastAPI |
-| Frontend Framework | Streamlit |
+| Frontend | Streamlit |
+| Backend | FastAPI |
 | Database | PostgreSQL |
 | PDF Processing | PyMuPDF |
 | Data Validation | Pydantic |
-| Testing Framework | pytest |
-| API Testing | Swagger UI |
 | API Communication | HTTP/REST |
+| API Documentation | Swagger UI |
+| Testing | pytest |
 
-## 5. System Modules
+## Application Workflow
 
-### Resume Analysis
-Accepts a PDF resume, extracts its text, and identifies relevant skills and sections.
+1. Upload a PDF resume through the Streamlit interface.
+2. Extract and analyze resume text through the backend.
+3. Identify technical skills and relevant resume sections.
+4. Generate viva questions based on the resume information.
+5. Practice MCQs and submit answers for evaluation.
+6. Review scores, feedback, and previous attempts.
 
-### Viva Preparation
-Generates questions based on the skills identified from the resume to support viva and interview preparation.
-
-### MCQ Practice
-Generates multiple-choice questions, accepts answers, evaluates submissions, and displays performance feedback.
-
-### MCQ History
-Displays previous MCQ attempts, including scores and question statistics.
-
-### Dashboard
-Presents a summary of available practice analytics and recent MCQ performance.
-
-## 6. API Endpoints
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/upload` | Upload and analyze a resume |
-| POST | `/mcqs` | Generate MCQs |
-| POST | `/mcqs/evaluate/combined` | Evaluate submitted MCQ answers |
-| GET | `/mcq-attempts` | Retrieve MCQ attempt history |
-
-For interactive API documentation, open `/docs` after starting the FastAPI server.
-
-## 7. Project Structure
+## Project Structure
 
 ```text
 resume-viva-ai/
@@ -92,72 +63,68 @@ resume-viva-ai/
 ├── storage/
 ├── tests/
 ├── init_db.py
-├── README.md
 ├── requirements.txt
-└── .env
+├── .gitignore
+└── README.md
 ```
 
-## 8. Prerequisites
+## Prerequisites
 
-- Python installed.
-- PostgreSQL installed and running.
-- A configured database.
-- A Python virtual environment.
-- Required Python packages installed.
+- Python
+- PostgreSQL
+- Git
+- A configured PostgreSQL database
+- A Python virtual environment
 
-## 9. Setup and Execution
+## Installation and Setup
 
-### Step 1: Open the project directory
+### 1. Clone the repository
 
-Open a terminal in the project root directory.
+```bash
+git clone https://github.com/sahilsharma-software/resume-viva-ai.git
+cd resume-viva-ai
+```
 
-### Step 2: Activate the virtual environment
+### 2. Create and activate a virtual environment
 
 On Windows PowerShell:
 
 ```powershell
+python -m venv myenv
 .\myenv\Scripts\Activate.ps1
 ```
 
-### Step 3: Install dependencies
-
-After adding the project's dependencies to `requirements.txt`, run:
+### 3. Install dependencies
 
 ```powershell
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-### Step 4: Configure environment variables
+### 4. Configure environment variables
 
-Configure the database connection and other required settings in `.env`. Do not commit passwords, API keys, or other secrets to version control.
+Create a local `.env` file in the project root and configure the PostgreSQL connection string and any other environment variables required by the application.
 
-### Step 5: Initialize the database
+Do not commit database passwords, API keys, or other secrets to version control.
 
-If required by the project's setup:
+### 5. Initialize the database
+
+If required by your configuration, run:
 
 ```powershell
 python init_db.py
 ```
 
-### Step 6: Start the backend
+### 6. Start the backend
 
 ```powershell
 uvicorn app.main:app --reload
 ```
 
-Backend API base URL:
+Backend URL: `http://127.0.0.1:8000`
 
-```text
-http://127.0.0.1:8000
-```
+Interactive API documentation: `http://127.0.0.1:8000/docs`
 
-Swagger documentation:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-### Step 7: Start the frontend
+### 7. Start the frontend
 
 Open a second terminal, activate the virtual environment, and run:
 
@@ -165,38 +132,40 @@ Open a second terminal, activate the virtual environment, and run:
 streamlit run frontend/streamlit_app.py
 ```
 
-### Step 8: Run automated tests
+Use the Streamlit interface to analyze resumes, prepare viva questions, practice MCQs, and review previous attempts.
 
-From the project root:
+## API Documentation
+
+The FastAPI backend provides endpoints for resume processing, MCQ generation and evaluation, AI viva preparation, and MCQ attempt history.
+
+Open `http://127.0.0.1:8000/docs` while the backend is running to inspect the actual routes, request schemas, and response formats.
+
+## Testing
+
+Run the automated test suite from the project root:
 
 ```powershell
 python -m pytest -v
 ```
 
-## 10. Testing
+**Latest reported test result: 54 passed.**
 
-The project test suite has been executed successfully, with **53 tests passed** at the latest reported run.
+Run the test suite again after code changes to verify that existing functionality remains stable.
 
-Manual edge-case checks completed:
+## Future Improvements
 
-- Empty MCQ answers.
-- Invalid PDF upload.
-- MCQ history persistence.
+- More contextual and personalized viva question generation
+- Enhanced resume analysis and skill recommendations
+- User authentication and individual progress tracking
+- Support for additional resume formats
+- Downloadable performance reports and expanded analytics
 
-Run the test suite again after making code changes.
+## Conclusion
 
-## 11. Expected Outcome
+The AI-Powered Resume Analysis and Viva Preparation System provides a unified platform for resume analysis and technical preparation. It combines PDF text extraction, skill identification, viva question generation, MCQ evaluation, and performance tracking to support students preparing for technical interviews and viva examinations.
 
-The application provides a unified platform for resume analysis and technical viva preparation. It helps users identify skills from their resumes, practice relevant questions, evaluate MCQ performance, and review previous attempts.
+## Application Screenshots
 
-## 12. Future Enhancements
+### Dashboard
 
-- Integrate an advanced NLP or large language model for more contextual question generation.
-- Improve resume scoring and personalized recommendations.
-- Add user authentication and individual progress tracking.
-- Expand support for additional resume formats.
-- Add more detailed analytics and downloadable reports.
-
-## 13. Conclusion
-
-The AI-Powered Resume Analysis and Viva Preparation System combines resume parsing, skill extraction, question generation, MCQ evaluation, and performance tracking in one application. It provides a foundation for supporting students in technical interview and viva preparation.
+![Dashboard](docs/screenshots/dashboard.png)
