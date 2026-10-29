@@ -8,6 +8,8 @@ The AI-Powered Resume Analysis and Viva Preparation System combines resume parsi
 
 Users can upload a PDF resume, review the extracted information, generate viva questions based on their skills, practice multiple-choice questions, and review their previous attempts.
 
+The application uses a **Streamlit frontend**, a **FastAPI backend**, and a **PostgreSQL database**. Docker support is available for running the frontend and backend in separate containers.
+
 ## Features
 
 - **PDF Resume Analysis** — Upload resumes and extract text using PyMuPDF.
@@ -20,6 +22,7 @@ Users can upload a PDF resume, review the extracted information, generate viva q
 - **REST API** — Expose application functionality through FastAPI.
 - **Database Persistence** — Store resume records, MCQ attempts, and AI viva questions in PostgreSQL.
 - **Automated Testing** — Test application behavior using pytest.
+- **Docker Support** — Run the backend and frontend in separate containers using Docker Compose.
 
 ## Technology Stack
 
@@ -34,6 +37,8 @@ Users can upload a PDF resume, review the extracted information, generate viva q
 | API Communication | HTTP/REST |
 | API Documentation | Swagger UI |
 | Testing | pytest |
+| Containerization | Docker |
+| Container Orchestration | Docker Compose |
 
 ## Application Workflow
 
@@ -59,22 +64,33 @@ resume-viva-ai/
 ├── data/
 ├── docs/
 ├── frontend/
+│   ├── Dockerfile
 │   └── streamlit_app.py
 ├── storage/
 ├── tests/
+├── .dockerignore
+├── .gitignore
+├── Dockerfile
+├── compose.yaml
 ├── init_db.py
 ├── requirements.txt
-├── .gitignore
 └── README.md
 ```
 
 ## Prerequisites
+
+### For local development
 
 - Python
 - PostgreSQL
 - Git
 - A configured PostgreSQL database
 - A Python virtual environment
+
+### For Docker
+
+- Docker Desktop with Docker Compose
+- A configured PostgreSQL database accessible to the backend container
 
 ## Installation and Setup
 
@@ -104,7 +120,17 @@ python -m pip install -r requirements.txt
 
 Create a local `.env` file in the project root and configure the PostgreSQL connection string and any other environment variables required by the application.
 
-Do not commit database passwords, API keys, or other secrets to version control.
+For Docker Compose, the database host must be reachable from the API container. If PostgreSQL is running directly on the Windows host, use `host.docker.internal` as the database hostname.
+
+For example, the connection string follows this general format:
+
+```text
+DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@host.docker.internal:5432/resume_viva_db
+```
+
+Replace the placeholder credentials with your own values and use the database name configured for your environment.
+
+**Security:** Never commit `.env` files, database passwords, API keys, or other secrets to version control.
 
 ### 5. Initialize the database
 
@@ -120,9 +146,9 @@ python init_db.py
 uvicorn app.main:app --reload
 ```
 
-Backend URL: `http://127.0.0.1:8000`
+Backend URL: http://127.0.0.1:8000
 
-Interactive API documentation: `http://127.0.0.1:8000/docs`
+Interactive API documentation: http://127.0.0.1:8000/docs
 
 ### 7. Start the frontend
 
@@ -134,11 +160,68 @@ streamlit run frontend/streamlit_app.py
 
 Use the Streamlit interface to analyze resumes, prepare viva questions, practice MCQs, and review previous attempts.
 
+## Running with Docker
+
+Docker Compose runs the FastAPI backend and Streamlit frontend as separate containers.
+
+### 1. Configure the database
+
+Ensure the `.env` file contains the required environment variables and a valid PostgreSQL connection string. When PostgreSQL runs on the host machine, use `host.docker.internal` as the database hostname.
+
+### 2. Build and start the containers
+
+From the project root, run:
+
+```powershell
+docker compose up -d --build
+```
+
+This builds the images and starts the services in the background.
+
+### 3. Check container status
+
+```powershell
+docker compose ps
+```
+
+Both the API and frontend containers should show a running status.
+
+### 4. Access the application
+
+- **Streamlit frontend:** http://localhost:8601
+- **FastAPI backend:** http://localhost:8000
+- **Swagger UI:** http://localhost:8000/docs
+
+The frontend communicates with the backend through the Docker Compose service address configured by the `API_URL` environment variable.
+
+### 5. View logs
+
+To view logs for both services:
+
+```powershell
+docker compose logs
+```
+
+To view logs for a specific service:
+
+```powershell
+docker compose logs api
+docker compose logs frontend
+```
+
+### 6. Stop the containers
+
+```powershell
+docker compose down
+```
+
+This stops and removes the Compose containers and network. It does not delete the PostgreSQL database running separately on the host machine.
+
 ## API Documentation
 
-The FastAPI backend provides endpoints for resume processing, MCQ generation and evaluation, AI viva preparation, and MCQ attempt history.
+The FastAPI backend provides endpoints for resume processing, MCQ generation and evaluation, viva preparation, and related application functionality.
 
-Open `http://127.0.0.1:8000/docs` while the backend is running to inspect the actual routes, request schemas, and response formats.
+Open http://127.0.0.1:8000/docs while the backend is running to inspect the available routes, request schemas, and response formats.
 
 ## Testing
 
@@ -148,7 +231,7 @@ Run the automated test suite from the project root:
 python -m pytest -v
 ```
 
-**Latest reported test result: 54 passed.**
+**Latest previously reported test result: 54 passed.**
 
 Run the test suite again after code changes to verify that existing functionality remains stable.
 
@@ -163,6 +246,8 @@ Run the test suite again after code changes to verify that existing functionalit
 ## Conclusion
 
 The AI-Powered Resume Analysis and Viva Preparation System provides a unified platform for resume analysis and technical preparation. It combines PDF text extraction, skill identification, viva question generation, MCQ evaluation, and performance tracking to support students preparing for technical interviews and viva examinations.
+
+The project also includes Docker support for running its frontend and backend in separate containers.
 
 ## Application Screenshots
 
